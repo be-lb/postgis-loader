@@ -1,21 +1,11 @@
-from __future__ import unicode_literals
-
-import warnings
-
 from django.db.backends.base.introspection import (
-    BaseDatabaseIntrospection,
-    FieldInfo,
-    TableInfo,
+    BaseDatabaseIntrospection, FieldInfo, TableInfo,
 )
 from django.db.models.indexes import Index
-from django.utils.deprecation import RemovedInDjango21Warning
 from django.utils.encoding import force_text
 
 
 class DatabaseIntrospection(BaseDatabaseIntrospection):
-    """An attempt to fix the original assumption
-    that everything lives in the public schema
-    """
     # Maps type codes to Django Field types.
     data_types_reverse = {
         16: 'BooleanField',
@@ -40,16 +30,6 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
 
     ignored_tables = []
 
-    _get_indexes_query = """
-        SELECT attr.attname, idx.indkey, idx.indisunique, idx.indisprimary
-        FROM pg_catalog.pg_class c, pg_catalog.pg_class c2,
-            pg_catalog.pg_index idx, pg_catalog.pg_attribute attr
-        WHERE c.oid = idx.indrelid
-            AND idx.indexrelid = c2.oid
-            AND attr.attrelid = c.oid
-            AND attr.attnum = idx.indkey[0]
-            AND c.relname = %s"""
-
     def get_primary_key_column(self, cursor, table_name, schema_name='public'):
         """
         Returns the name of the primary key column for the given table.
@@ -61,8 +41,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         return None
 
     def get_field_type(self, data_type, description):
-        field_type = super(DatabaseIntrospection, self).get_field_type(
-            data_type, description)
+        field_type = super().get_field_type(data_type, description)
         if description.default and 'nextval' in description.default:
             if field_type == 'IntegerField':
                 return 'AutoField'
@@ -71,9 +50,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         return field_type
 
     def get_table_list(self, cursor):
-        """
-        Returns a list of table and view names in the current database.
-        """
+        """Return a list of table and view names in the current database."""
         cursor.execute("""
             SELECT c.relname, c.relkind
             FROM pg_catalog.pg_class c
@@ -81,19 +58,28 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             WHERE c.relkind IN ('r', 'v')
                 AND n.nspname NOT IN ('pg_catalog', 'pg_toast')
                 AND pg_catalog.pg_table_is_visible(c.oid)""")
-        return [
-            TableInfo(row[0], {
-                'r': 't',
-                'v': 'v'
-            }.get(row[1])) for row in cursor.fetchall()
-            if row[0] not in self.ignored_tables
-        ]
+        return [TableInfo(row[0], {'r': 't', 'v': 'v'}.get(row[1]))
+                for row in cursor.fetchall()
+                if row[0] not in self.ignored_tables]
 
     def get_table_description(self, cursor, table_name, schema_name='public'):
-        "Returns a description of the table, with the DB-API cursor.description interface."
+        """
+        Return a description of the table with the DB-API cursor.description
+        interface.
+        """
         # As cursor.description does not return reliably the nullable property,
         # we have to query the information_schema (#7783)
-        #  but does not work on materialized views -- pm
+        # cursor.execute("""
+        #     SELECT column_name, is_nullable, column_default
+        #     FROM information_schema.columns
+        #     WHERE table_name = %s""", [table_name])
+        # field_map = {line[0]: line[1:] for line in cursor.fetchall()}
+        # cursor.execute("SELECT * FROM %s LIMIT 1" % self.connection.ops.quote_name(table_name))
+        # return [
+        #     FieldInfo(*line[0:6], field_map[line.name][0] == 'YES', field_map[line.name][1])
+        #     for line in cursor.description
+        # ]
+        #  Does not work on materialized views -- pm
         # cursor.execute("""
         #     SELECT column_name, is_nullable, column_default
         #     FROM information_schema.columns
@@ -107,13 +93,32 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             for line in cursor.description
         ]
 
+    def get_sequences(self, cursor, table_name, table_fields=()):
+        sequences = []
+        cursor.execute("""
+            SELECT s.relname as sequence_name, col.attname
+            FROM pg_class s
+                JOIN pg_namespace sn ON sn.oid = s.relnamespace
+                JOIN pg_depend d ON d.refobjid = s.oid AND d.refclassid='pg_class'::regclass
+                JOIN pg_attrdef ad ON ad.oid = d.objid AND d.classid = 'pg_attrdef'::regclass
+                JOIN pg_attribute col ON col.attrelid = ad.adrelid AND col.attnum = ad.adnum
+                JOIN pg_class tbl ON tbl.oid = ad.adrelid
+                JOIN pg_namespace n ON n.oid = tbl.relnamespace
+            WHERE s.relkind = 'S'
+              AND d.deptype in ('a', 'n')
+              AND n.nspname = 'public'
+              AND tbl.relname = %s
+        """, [table_name])
+        for row in cursor.fetchall():
+            sequences.append({'name': row[0], 'table': table_name, 'column': row[1]})
+        return sequences
+
     def get_relations(self, cursor, table_name, schema_name='public'):
         """
-        Returns a dictionary of {field_name: (field_name_other_table, other_table)}
+        Return a dictionary of {field_name: (field_name_other_table, other_table)}
         representing all relationships to the given table.
         """
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT c2.relname, a1.attname, a2.attname
             FROM pg_constraint con
             LEFT JOIN pg_class c1 ON con.conrelid = c1.oid
@@ -130,8 +135,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
 
     def get_key_columns(self, cursor, table_name, schema_name='public'):
         key_columns = []
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT kcu.column_name, ccu.table_name AS referenced_table, ccu.column_name AS referenced_column
             FROM information_schema.constraint_column_usage ccu
             LEFT JOIN information_schema.key_column_usage kcu
@@ -142,36 +146,11 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                 ON ccu.constraint_catalog = tc.constraint_catalog
                     AND ccu.constraint_schema = tc.constraint_schema
                     AND ccu.constraint_name = tc.constraint_name
-            WHERE kcu.table_schema = %s AND kcu.table_name = %s 
-                AND tc.constraint_type = 'FOREIGN KEY'""",
+            WHERE kcu.table_schema = %s AND  kcu.table_name = %s 
+            AND tc.constraint_type = 'FOREIGN KEY'""", 
             [schema_name, table_name])
         key_columns.extend(cursor.fetchall())
         return key_columns
-
-    def get_indexes(self, cursor, table_name, schema_name='public'):
-        warnings.warn(
-            "get_indexes() is deprecated in favor of get_constraints().",
-            RemovedInDjango21Warning,
-            stacklevel=2)
-        # This query retrieves each index on the given table, including the
-        # first associated field name
-        cursor.execute(self._get_indexes_query, [table_name])
-        indexes = {}
-        for row in cursor.fetchall():
-            # row[1] (idx.indkey) is stored in the DB as an array. It comes out as
-            # a string of space-separated integers. This designates the field
-            # indexes (1-based) of the fields that have indexes on the table.
-            # Here, we skip any indexes across multiple fields.
-            if ' ' in row[1]:
-                continue
-            if row[0] not in indexes:
-                indexes[row[0]] = {'primary_key': False, 'unique': False}
-            # It's possible to have the unique and PK constraints in separate indexes.
-            if row[3]:
-                indexes[row[0]]['primary_key'] = True
-            if row[2]:
-                indexes[row[0]]['unique'] = True
-        return indexes
 
     def get_constraints(self, cursor, table_name, schema_name='public'):
         """
@@ -183,18 +162,12 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         # Loop over the key table, collecting things as constraints. The column
         # array must return column names in the same order in which they were
         # created.
-        # The subquery containing generate_series can be replaced with
-        # "WITH ORDINALITY" when support for PostgreSQL 9.3 is dropped.
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT
                 c.conname,
                 array(
                     SELECT attname
-                    FROM (
-                        SELECT unnest(c.conkey) AS colid,
-                               generate_series(1, array_length(c.conkey, 1)) AS arridx
-                    ) AS cols
+                    FROM unnest(c.conkey) WITH ORDINALITY cols(colid, arridx)
                     JOIN pg_attribute AS ca ON cols.colid = ca.attnum
                     WHERE ca.attrelid = c.conrelid
                     ORDER BY cols.arridx
@@ -212,36 +185,23 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         """, [schema_name, table_name])
         for constraint, columns, kind, used_cols, options in cursor.fetchall():
             constraints[constraint] = {
-                "columns":
-                columns,
-                "primary_key":
-                kind == "p",
-                "unique":
-                kind in ["p", "u"],
-                "foreign_key":
-                tuple(used_cols.split(".", 1)) if kind == "f" else None,
-                "check":
-                kind == "c",
-                "index":
-                False,
-                "definition":
-                None,
-                "options":
-                options,
+                "columns": columns,
+                "primary_key": kind == "p",
+                "unique": kind in ["p", "u"],
+                "foreign_key": tuple(used_cols.split(".", 1)) if kind == "f" else None,
+                "check": kind == "c",
+                "index": False,
+                "definition": None,
+                "options": options,
             }
         # Now get indexes
-        # The row_number() function for ordering the index fields can be
-        # replaced by WITH ORDINALITY in the unnest() functions when support
-        # for PostgreSQL 9.3 is dropped.
-        cursor.execute(
-            """
+        cursor.execute("""
             SELECT
-                indexname, array_agg(attname ORDER BY rnum), indisunique, indisprimary,
-                array_agg(ordering ORDER BY rnum), amname, exprdef, s2.attoptions
+                indexname, array_agg(attname ORDER BY arridx), indisunique, indisprimary,
+                array_agg(ordering ORDER BY arridx), amname, exprdef, s2.attoptions
             FROM (
                 SELECT
-                    row_number() OVER () as rnum, c2.relname as indexname,
-                    idx.*, attr.attname, am.amname,
+                    c2.relname as indexname, idx.*, attr.attname, am.amname,
                     CASE
                         WHEN idx.indexprs IS NOT NULL THEN
                             pg_get_indexdef(idx.indexrelid)
@@ -254,21 +214,19 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
                     END as ordering,
                     c2.reloptions as attoptions
                 FROM (
-                    SELECT
-                        *, unnest(i.indkey) as key, unnest(i.indoption) as option
-                    FROM pg_index i
+                    SELECT *
+                    FROM pg_index i, unnest(i.indkey, i.indoption) WITH ORDINALITY koi(key, option, arridx)
                 ) idx
                 LEFT JOIN pg_class c ON idx.indrelid = c.oid
                 LEFT JOIN pg_class c2 ON idx.indexrelid = c2.oid
-                LEFT JOIN pg_namespace AS ns ON c.relnamespace = ns.oid
                 LEFT JOIN pg_am am ON c2.relam = am.oid
                 LEFT JOIN pg_attribute attr ON attr.attrelid = c.oid AND attr.attnum = idx.key
-                WHERE ns.nspname = %s AND  c.relname = %s
+                JOIN pg_namespace AS ns ON c.relnamespace = ns.oid
+                WHERE ns.nspname = %s AND c.relname = %s
             ) s2
             GROUP BY indexname, indisunique, indisprimary, amname, exprdef, attoptions;
         """, [schema_name, table_name])
-        for index, columns, unique, primary, orders, type_, definition, options in cursor.fetchall(
-        ):
+        for index, columns, unique, primary, orders, type_, definition, options in cursor.fetchall():
             if index not in constraints:
                 constraints[index] = {
                     "columns": columns if columns != [None] else [],
