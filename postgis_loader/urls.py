@@ -15,8 +15,19 @@
 #
 
 from django.conf.urls import url
+from django.urls import reverse
 
 from .handler import handle_request
+
+
+def from_identifier(rid, request=None):
+    schema = rid.hostname
+    table = rid.path[1:]
+    rel_url = reverse('geodata.postgis', args=[schema, table])
+    if request is not None:
+        return request.build_absolute_uri(rel_url)
+    return rel_url
+
 
 urlpatterns = [
     url(r'^postgis/(?P<schema>.+)/(?P<table>.+)/$',
