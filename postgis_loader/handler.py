@@ -52,7 +52,7 @@ def handle_request(request, schema, table):
             dump(data, writer)
             stream.seek(0)
             cache.set(ckey, stream, read=True)
-            return HttpResponse(content=data, content_type='application/json')
+            return JsonResponse(data)
 
     except InvalidCacheBackendError:
         print('InvalidCacheBackendError')
