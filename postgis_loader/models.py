@@ -339,14 +339,15 @@ def get_meta(table_name, constraints, column_to_field_name):
     # return meta
 
 
-LAYER_MODELS = dict()
+## Getting rid of this cache that prevents to access
+## changing tables/views. A rough estimate with timeit
+## gives 22ms to build the model, at this point this
+## is tolerable.
+# LAYER_MODELS = dict()
 
 
 def get_layer(schema, table_name):
     """returns a tuple (Model, geometry_field, geometry_field_type) for a given table in given schema
     """
-    fn = '{}.{}'.format(schema, table_name)
-    if fn not in LAYER_MODELS:
-        LAYER_MODELS[fn] = inspect_table(schema, table_name)
+    return inspect_table(schema, table_name)
 
-    return LAYER_MODELS.get(fn)
