@@ -88,10 +88,40 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         cursor.execute("SELECT * FROM %s.%s LIMIT 1" %
                        (self.connection.ops.quote_name(schema_name),
                         self.connection.ops.quote_name(table_name)))
-        return [
-            FieldInfo(*((force_text(line[0]), ) + line[1:6] + (False, None)))
-            for line in cursor.description
-        ]
+
+        # pm - with psycopg2 2.8 the following fails with:
+        # TypeError: sequence index must be integer, not 'slice'
+        # return [
+        #     FieldInfo(*((force_text(line[0]), ) + line[1:6] + (False, None)))
+        #     for line in cursor.description
+        # ]
+        # I'll take a less shortcutty way, just assuming sequence as per
+        # https://www.python.org/dev/peps/pep-0249/#description
+
+        description = []
+        for line in cursor.description:
+            name = line[0]
+            type_code = line[1]
+            display_size = line[2]
+            internal_size = line[3]
+            precision = line[4]
+            scale = line[5]
+            null_ok = False # line[6]
+            description.append(FieldInfo(
+                force_text(name),
+                type_code,
+                display_size,
+                internal_size,
+                precision,
+                scale,
+                null_ok, 
+                None,
+            ))
+
+        return description
+
+
+
 
     def get_sequences(self, cursor, table_name, table_fields=()):
         sequences = []
