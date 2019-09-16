@@ -38,7 +38,7 @@ SELECT row_to_json(fc)
 """
 
 
-def get_query(schema, table):
+def get_query(schema, table, query_template, **kwargs):
     model, geometry_field, geometry_field_type = get_layer(schema, table)
     fields = []
     for field in model._meta.get_fields():
@@ -46,17 +46,18 @@ def get_query(schema, table):
             fields.append('"{}"'.format(field.column))
     pk_field = model._meta.pk.column
 
-    return GEOJSON_QUERY.format(
+    return query_template.format(
         pk_column=pk_field,
         schema=schema,
         table=table,
         max_decimal_digits=getattr(settings, 'MAX_DECIMAL_DIGITS', 2),
         geometry_column=geometry_field,
-        field_names=', '.join(fields))
+        field_names=', '.join(fields),
+        **kwargs)
 
 
 def get_geojson(schema, table):
-    query = get_query(schema, table)
+    query = get_query(schema, table, GEOJSON_QUERY)
     with connections[schema].cursor() as cursor:
         cursor.execute(query)
         row = cursor.fetchone()

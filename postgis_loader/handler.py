@@ -19,6 +19,7 @@ from json import loads, dump
 from django.core.cache import caches, InvalidCacheBackendError
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponse, JsonResponse, FileResponse
+from django.views.decorators.http import require_http_methods
 from .serializer import get_geojson
 
 
@@ -34,7 +35,7 @@ def handle_request(request, schema, table):
         try:
             reader = cache.read(ckey)
             reader_type = type(reader)
-            print('ReaderType {} {}'.format(ckey, reader_type))
+            # print('ReaderType {} {}'.format(ckey, reader_type))
             if reader_type is io.BufferedReader:
                 return FileResponse(reader, content_type='application/json')
             elif reader_type is dict:
